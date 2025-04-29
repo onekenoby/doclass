@@ -25,3 +25,21 @@ def extract_text_from_file(filepath):
 
     else:
         raise ValueError("Unsupported file type")
+    
+    
+def extract_paragraphs_from_pdf(filepath):
+    doc = fitz.open(filepath)
+    paragraphs = []
+
+    for page in doc:
+        text = page.get_text("blocks")
+        for block in text:
+            block_text = block[4].strip()
+            if block_text:
+                paragraphs.append(block_text)
+
+    return paragraphs
+
+def extract_paragraphs_from_docx(filepath):
+    doc = docx.Document(filepath)
+    return [p.text.strip() for p in doc.paragraphs if p.text.strip()]
