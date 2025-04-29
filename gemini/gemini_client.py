@@ -9,20 +9,31 @@ load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Initialize the Gemini model (use gemini-pro for text understanding)
-model = genai.GenerativeModel(model_name="gemini-pro")
+model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 
 def generate_cypher_from_text(text: str) -> str:
     """
-    Send the extracted text to Gemini and receive Cypher queries.
+    Send text to Gemini and return Cypher queries without any LOAD CSV commands.
     """
     prompt = f"""
-    Read the following document text and extract relevant entities and relationships.
-    Generate Cypher queries to create a Neo4j knowledge graph. Use clear MERGE or CREATE syntax.
+    Read the following document and extract entities (e.g., Person, Company, Date) 
+    and relationships between them.
+
+    Generate clean, standalone Neo4j Cypher CREATE or MERGE queries only.
+
+    ⚡ Do NOT use LOAD CSV.
+    ⚡ Do NOT reference any external files.
+    ⚡ Do NOT use CALL procedures.
 
     Document:
     {text}
     """
+
     response = model.generate_content(prompt)
 
-    # Return raw Cypher output
-    return response.text.strip()
+    raw = response.text.strip()
+
+    if raw.startswith("```") and raw.endswith("```"):
+        raw = raw.strip("```").strip()
+
+    return raw
