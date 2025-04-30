@@ -16,18 +16,18 @@ def generate_cypher_from_text(text: str) -> str:
     Send text to Gemini and return Cypher queries without any LOAD CSV commands.
     """
     prompt = f"""
-    Read the following document and extract entities (e.g., Person, Company, Date) 
-    and relationships between them.
+            Read the following document and extract entities (e.g., Person, Company, Date) 
+            and relationships between them.
 
-    Generate clean, standalone Neo4j Cypher CREATE or MERGE queries only.
+            Generate clean, standalone Neo4j Cypher CREATE or MERGE queries only.
 
-    ⚡ Do NOT use LOAD CSV.
-    ⚡ Do NOT reference any external files.
-    ⚡ Do NOT use CALL procedures.
+            ⚡ Do NOT use LOAD CSV.
+            ⚡ Do NOT reference any external files.
+            ⚡ Do NOT use CALL procedures.
 
-    Document:
-    {text}
-    """
+            Document:
+            {text}
+            """
 
     response = model.generate_content(prompt)
 
@@ -46,33 +46,33 @@ def generate_cypher_from_paragraph(paragraph_text: str, paragraph_index: int, do
     - Paragraph node -> Extracted Entity nodes
     """
     prompt = f"""
-You are helping to build a Neo4j knowledge graph from a document.
+            You are helping to build a Neo4j knowledge graph from a document.
 
-Input Information:
-- Document filename: "{docname}"
-- Paragraph index: {paragraph_index}
-- Paragraph text:
-\"\"\"
-{paragraph_text}
-\"\"\"
+            Input Information:
+            - Document filename: "{docname}"
+            - Paragraph index: {paragraph_index}
+            - Paragraph text:
+            \"\"\"
+            {paragraph_text}
+            \"\"\"
 
-Task:
-- Create a Document node with label :Document and a property `filename`.
-- Create a Paragraph node with label :Paragraph and properties `index` (integer) and `text` (string).
-- Link Document to Paragraph using relationship :HAS_PARAGRAPH.
-- Extract any Entities (Person, Company, Date, Location, Concept) you find in the paragraph.
-- Create Entity nodes with label :Entity and properties `name` and `type`.
-- Link each Entity to the Paragraph using relationship :CONTAINS_ENTITY.
+            Task:
+            - Create a Document node with label :Document and a property `filename`.
+            - Create a Paragraph node with label :Paragraph and properties `index` (integer) and `text` (string).
+            - Link Document to Paragraph using relationship :HAS_PARAGRAPH.
+            - Extract any Entities (Person, Company, Date, Location, Concept) you find in the paragraph.
+            - Create Entity nodes with label :Entity and properties `name` and `type`.
+            - Link each Entity to the Paragraph using relationship :CONTAINS_ENTITY.
 
-Format:
-- Only output clean Cypher statements.
-- Use MERGE for nodes and relationships.
-- Do NOT use LOAD CSV.
-- Do NOT use Markdown (no triple backticks or extra text).
-- No explanations, only the Cypher code.
+            Format:
+            - Only output clean Cypher statements.
+            - Use MERGE for nodes and relationships.
+            - Do NOT use LOAD CSV.
+            - Do NOT use Markdown (no triple backticks or extra text).
+            - No explanations, only the Cypher code.
 
-Go!
-"""
+            Go!
+            """
 
     response = model.generate_content(prompt)
 
