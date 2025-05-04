@@ -60,3 +60,4 @@ Evidenzia concetti chiave, relazioni implicite e insight rilevanti.
     if narrative.startswith("```") and narrative.endswith("```"):
         narrative = narrative.strip("```").strip()
     return narrative
+
