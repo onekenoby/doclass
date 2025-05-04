@@ -43,13 +43,14 @@ Go!
 
 def generate_narrative_from_cypher(cypher_script: str) -> str:
     """
-    Given a block of Cypher CREATE/MERGE statements, return a concise,
-    human-friendly summary of the entities and relationships.
+    Fornisci in italiano una interpretazione approfondita dei comandi Cypher,
+    seguendo la gerarchia Documento -> Paragrafo -> Contenuto.
     """
     prompt = f"""
-You are an assistant that summarizes knowledge graphs.
-Given the following Neo4j Cypher statements, describe in plain language
-the main entities and how they are connected.
+Sei un assistente esperto nella semantica dei grafi di conoscenza.
+Fornisci in italiano una interpretazione approfondita dei seguenti comandi Cypher,
+tenendo conto della gerarchia di informazione: Documento -> Paragrafo -> Contenuto.
+Evidenzia concetti chiave, relazioni implicite e insight rilevanti.
 
 {cypher_script}
 """
