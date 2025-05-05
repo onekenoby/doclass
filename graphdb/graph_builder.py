@@ -1,3 +1,4 @@
+import re
 from neo4j import GraphDatabase, exceptions
 import os
 from dotenv import load_dotenv
@@ -11,23 +12,36 @@ driver = GraphDatabase.driver(
     auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD"))
 )
 
+def preprocess_script(cypher_script: str) -> str:
+    """
+    Clean the raw script:
+    - Remove stray 'cypher' markers
+    - Collapse newlines inside string literals
+    - Escape internal double quotes
+    """
+    # Remove standalone 'cypher' lines
+    script = re.sub(r'(?m)^\s*cypher\s*$', '', cypher_script)
+    # Collapse newlines and escape double quotes inside literals
+    def escape_literal(match):
+        content = match.group(1).replace('\n', ' ').replace('"', '\\"')
+        return f'"{content}"'
+    script = re.sub(r'"([^"\n]*(?:\n[^"\n]*)*)"', escape_literal, script, flags=re.DOTALL)
+    return script
+
 def execute_cypher_queries(cypher_script: str):
     """
-    Execute the given Cypher script by running each statement (CREATE or MERGE)
-    separately, respecting the hierarchy: Document -> Paragraph -> Content.
-    This approach ensures we systematically retrieve and create all nodes and
-    relationships in the knowledge graph.
-    Splits on semicolons and newlines, skipping empty lines and stripping trailing semicolons.
+    Execute each MERGE/CREATE after preprocessing, respecting
+    the hierarchy: Documento -> Paragrafo -> Contenuto.
     """
-    # Split script into individual statements
+    script = preprocess_script(cypher_script)
+    # Split into statements by semicolon
     raw_statements = []
-    parts = cypher_script.split(';')
+    parts = script.split(';')
     for part in parts:
         for line in part.splitlines():
             stmt = line.strip()
-            if not stmt:
-                continue
-            raw_statements.append(stmt)
+            if stmt:
+                raw_statements.append(stmt)
 
     with driver.session() as session:
         for stmt in raw_statements:
@@ -41,23 +55,20 @@ def execute_cypher_queries(cypher_script: str):
 
 def interpret_graph(cypher_script: str):
     """
-    Stampa una narrazione approfondita in italiano del grafo
-    e mostra la struttura dello schema (nodi e relazioni).
+    Stampa analisi semantica in italiano e mostra schema (nodi/relazioni).
     """
-    # Narrazione semantica in italiano
     narrative_it = generate_narrative_from_cypher(cypher_script)
     print("\n=== Interpretazione Semantica del Grafo ===\n")
     print(narrative_it)
 
-    # Recupera struttura dello schema: etichette e tipi di relazioni
     with driver.session() as session:
-        labels = [record["label"] for record in session.run("CALL db.labels()")]
-        rel_types = [record["relationshipType"] for record in session.run("CALL db.relationshipTypes()")]
+        labels = [r["label"] for r in session.run("CALL db.labels()")]
+        rels = [r["relationshipType"] for r in session.run("CALL db.relationshipTypes()")]
 
     print("\n=== Struttura dello Schema ===\n")
-    print("Nodi (etichette):")
+    print("Nodi:")
     for lbl in labels:
         print(f"- {lbl}")
     print("\nRelazioni:")
-    for rt in rel_types:
-        print(f"- {rt}")
+    for rel in rels:
+        print(f"- {rel}")

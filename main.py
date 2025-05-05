@@ -7,8 +7,8 @@ def main():
     text = extract_text_from_file(filepath)
     cypher = generate_cypher_from_text(text)
     execute_cypher_queries(cypher)
-    # After writing to Neo4j, print a natural-language summary of the graph
     interpret_graph(cypher)
 
 if __name__ == "__main__":
     main()
+    
