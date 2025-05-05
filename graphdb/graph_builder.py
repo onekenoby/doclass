@@ -1,28 +1,50 @@
 # graphdb/graph_builder.py
+
 import re
-from neo4j import GraphDatabase, exceptions
 import os
+from pathlib import Path
 from dotenv import load_dotenv
-from gemini.gemini_client import generate_narrative_from_cypher
+from neo4j import GraphDatabase, exceptions
 
-load_dotenv()
+# Locate and load the .env file in the project root
+env_path = Path(__file__).resolve().parents[1] / ".env"
+print(f"[DEBUG] Loading .env from {env_path}")
+load_dotenv(env_path, override=True)
 
-driver = GraphDatabase.driver(
-    os.getenv("NEO4J_URI"),
-    auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD"))
-)
+# Read and sanitize Neo4j connection details
+uri = os.getenv("NEO4J_URI")
+user = os.getenv("NEO4J_USER")
+password = os.getenv("NEO4J_PASSWORD")
+
+#uri = "bolt://127.0.0.1:7690"
+#user = "neo4j"
+#password = "onekenoby"
+
+
+
+print(f"[DEBUG] Neo4j → URI={uri!r}, USER={user!r}, PASS_LOADED={bool(password)}")
+
+# Initialize the Neo4j driver
+try:
+    driver = GraphDatabase.driver(uri, auth=(user, password))
+except Exception as e:
+    print(f"❌ Failed to initialize Neo4j driver: {e}")
+    driver = None
+
 
 def preprocess_script(cypher_script: str) -> str:
     """
-    Clean the raw script:
-    - Remove stray 'cypher' markers
-    - Collapse newlines inside string literals
-    - Escape internal double quotes
+    Clean the raw Cypher script:
+      - Remove stray 'cypher' markers
+      - Collapse newlines inside string literals
+      - Escape internal double quotes
     """
     script = re.sub(r'(?m)^\s*cypher\s*$', '', cypher_script)
+
     def escape_literal(match):
         content = match.group(1).replace('\n', ' ').replace('"', '\\"')
         return f'"{content}"'
+
     return re.sub(
         r'"([^"\n]*(?:\n[^"\n]*)*)"',
         escape_literal,
@@ -30,11 +52,16 @@ def preprocess_script(cypher_script: str) -> str:
         flags=re.DOTALL
     )
 
+
 def execute_cypher_queries(cypher_script: str):
     """
-    Execute each MERGE/CREATE after preprocessing, respecting
-    the hierarchy: Documento -> Paragrafo -> Contenuto.
+    Execute each MERGE/CREATE statement after preprocessing.
+    If the driver is not initialized, skip execution gracefully.
     """
+    if driver is None:
+        print("❌ Cannot execute queries: Neo4j driver not initialized.")
+        return
+
     script = preprocess_script(cypher_script)
     statements = []
     for part in script.split(';'):
@@ -47,60 +74,18 @@ def execute_cypher_queries(cypher_script: str):
         for stmt in statements:
             try:
                 session.run(stmt)
+            except exceptions.AuthError:
+                print("❌ Authorization error: please check NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD.")
+                return
             except exceptions.CypherSyntaxError as e:
-                print(f"⚠️ Syntax error:\n{stmt}\n→ {e.message}")
+                print(f"⚠️ Syntax error in Cypher:\n{stmt}\n→ {e.message}")
             except exceptions.Neo4jError as e:
-                print(f"⚠️ Execution error:\n{stmt}\n→ {e.message}")
-    driver.close()
+                print(f"⚠️ Neo4j execution error:\n{stmt}\n→ {e.message}")
 
-def get_graph_schema():
+
+def close_driver():
     """
-    Retrieve the current graph schema:
-      • node labels, with their indexes & constraints
-      • relationship types
-    Returns:
-      node_schemas: [{ name, indexes: [...], constraints: [...] }, …]
-      rel_schemas:  [{ name }, …]
+    Close the Neo4j driver connection.
     """
-    with driver.session() as session:
-        labels = [r["label"] for r in session.run("CALL db.labels()")]
-        rel_types = [r["relationshipType"] for r in session.run("CALL db.relationshipTypes()")]
-        idx_records = list(session.run("SHOW INDEXES"))
-        cons_records = list(session.run("SHOW CONSTRAINTS"))
-
-    node_schemas = []
-    for label in labels:
-        idx_props = []
-        for rec in idx_records:
-            types = rec.get("labelsOrTypes") or []
-            if label in types:
-                props = rec.get("properties") or []
-                idx_props.extend(props)
-        cons_desc = []
-        for rec in cons_records:
-            types = rec.get("labelsOrTypes") or []
-            if label in types:
-                name = rec.get("name") or rec.get("type")
-                cons_desc.append(name)
-        node_schemas.append({
-            "name": label,
-            "indexes": sorted(set(idx_props)),
-            "constraints": cons_desc
-        })
-
-    rel_schemas = [{"name": r} for r in sorted(set(rel_types))]
-    return node_schemas, rel_schemas
-
-def interpret_graph(cypher_script: str):
-    """
-    1) Print the Italian narrative.
-    2) Fetch & print the full schema structure.
-    """
-    narrative_it = generate_narrative_from_cypher(cypher_script)
-    print("\n=== Interpretazione Semantica del Grafo ===\n")
-    print(narrative_it)
-
-    node_schemas, rel_schemas = get_graph_schema()
-    print("\n=== Schema del Grafo ===\n")
-    print(node_schemas)
-    print(rel_schemas)
+    if driver:
+        driver.close()
