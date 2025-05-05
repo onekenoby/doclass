@@ -1,10 +1,10 @@
+# graphdb/graph_builder.py
 import re
 from neo4j import GraphDatabase, exceptions
 import os
 from dotenv import load_dotenv
 from gemini.gemini_client import generate_narrative_from_cypher
 
-# Load environment
 load_dotenv()
 
 driver = GraphDatabase.driver(
@@ -19,14 +19,16 @@ def preprocess_script(cypher_script: str) -> str:
     - Collapse newlines inside string literals
     - Escape internal double quotes
     """
-    # Remove standalone 'cypher' lines
     script = re.sub(r'(?m)^\s*cypher\s*$', '', cypher_script)
-    # Collapse newlines and escape double quotes inside literals
     def escape_literal(match):
         content = match.group(1).replace('\n', ' ').replace('"', '\\"')
         return f'"{content}"'
-    script = re.sub(r'"([^"\n]*(?:\n[^"\n]*)*)"', escape_literal, script, flags=re.DOTALL)
-    return script
+    return re.sub(
+        r'"([^"\n]*(?:\n[^"\n]*)*)"',
+        escape_literal,
+        script,
+        flags=re.DOTALL
+    )
 
 def execute_cypher_queries(cypher_script: str):
     """
@@ -34,41 +36,71 @@ def execute_cypher_queries(cypher_script: str):
     the hierarchy: Documento -> Paragrafo -> Contenuto.
     """
     script = preprocess_script(cypher_script)
-    # Split into statements by semicolon
-    raw_statements = []
-    parts = script.split(';')
-    for part in parts:
+    statements = []
+    for part in script.split(';'):
         for line in part.splitlines():
             stmt = line.strip()
             if stmt:
-                raw_statements.append(stmt)
+                statements.append(stmt)
 
     with driver.session() as session:
-        for stmt in raw_statements:
+        for stmt in statements:
             try:
                 session.run(stmt)
             except exceptions.CypherSyntaxError as e:
-                print(f"⚠️ Syntax error executing statement:\n{stmt}\n  -> {e.message}")
+                print(f"⚠️ Syntax error:\n{stmt}\n→ {e.message}")
             except exceptions.Neo4jError as e:
-                print(f"⚠️ Error executing statement:\n{stmt}\n  -> {e.message}")
+                print(f"⚠️ Execution error:\n{stmt}\n→ {e.message}")
     driver.close()
+
+def get_graph_schema():
+    """
+    Retrieve the current graph schema:
+      • node labels, with their indexes & constraints
+      • relationship types
+    Returns:
+      node_schemas: [{ name, indexes: [...], constraints: [...] }, …]
+      rel_schemas:  [{ name }, …]
+    """
+    with driver.session() as session:
+        labels = [r["label"] for r in session.run("CALL db.labels()")]
+        rel_types = [r["relationshipType"] for r in session.run("CALL db.relationshipTypes()")]
+        idx_records = list(session.run("SHOW INDEXES"))
+        cons_records = list(session.run("SHOW CONSTRAINTS"))
+
+    node_schemas = []
+    for label in labels:
+        idx_props = []
+        for rec in idx_records:
+            types = rec.get("labelsOrTypes") or []
+            if label in types:
+                props = rec.get("properties") or []
+                idx_props.extend(props)
+        cons_desc = []
+        for rec in cons_records:
+            types = rec.get("labelsOrTypes") or []
+            if label in types:
+                name = rec.get("name") or rec.get("type")
+                cons_desc.append(name)
+        node_schemas.append({
+            "name": label,
+            "indexes": sorted(set(idx_props)),
+            "constraints": cons_desc
+        })
+
+    rel_schemas = [{"name": r} for r in sorted(set(rel_types))]
+    return node_schemas, rel_schemas
 
 def interpret_graph(cypher_script: str):
     """
-    Stampa analisi semantica in italiano e mostra schema (nodi/relazioni).
+    1) Print the Italian narrative.
+    2) Fetch & print the full schema structure.
     """
     narrative_it = generate_narrative_from_cypher(cypher_script)
     print("\n=== Interpretazione Semantica del Grafo ===\n")
     print(narrative_it)
 
-    with driver.session() as session:
-        labels = [r["label"] for r in session.run("CALL db.labels()")]
-        rels = [r["relationshipType"] for r in session.run("CALL db.relationshipTypes()")]
-
-    print("\n=== Struttura dello Schema ===\n")
-    print("Nodi:")
-    for lbl in labels:
-        print(f"- {lbl}")
-    print("\nRelazioni:")
-    for rel in rels:
-        print(f"- {rel}")
+    node_schemas, rel_schemas = get_graph_schema()
+    print("\n=== Schema del Grafo ===\n")
+    print(node_schemas)
+    print(rel_schemas)
