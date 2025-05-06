@@ -1,0 +1,155 @@
+# gemini/gemini_client.py
+
+import os
+import json
+import google.generativeai as genai
+from dotenv import load_dotenv, find_dotenv
+from json import JSONDecodeError
+from google.generativeai import types
+
+# Load project‑root .env so that GEMINI_API_KEY loads correctly
+load_dotenv(find_dotenv())
+
+# ────────────────  Gemini configuration  ────────────────
+# You can switch model versions here if needed (e.g. "models/gemini-1.5-pro-latest")
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
+
+
+############################################
+# Utility helper to grab the first JSON blob
+############################################
+
+def extract_json(s: str) -> str:
+    """Return the first balanced‑brace JSON object found inside *s*."""
+    start = None
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == '{':
+            if start is None:
+                start = i
+            depth += 1
+        elif ch == '}' and depth > 0:
+            depth -= 1
+            if depth == 0 and start is not None:
+                return s[start : i + 1]
+    return s
+
+
+###############################################################
+# 1️⃣  MAIN ENTRY – STRUCTURED KG & CYPHER GENERATION PROMPT  #
+###############################################################
+
+def generate_structured_schema_and_cypher(text: str) -> dict:
+    """Given raw document text, produce a rich JSON spec and Cypher script.
+
+    The prompt below is engineered to maximise **coverage** and **granularity**
+    of the resulting knowledge‑graph while keeping the output machine‑parsable.
+    """
+
+    prompt = f"""
+You are an expert **knowledge‑graph architect** and **triple extractor**.
+Your goal is to convert the following document into a *dense* but *coherent*
+knowledge graph, surfacing as many meaningful **entities** (nodes) and
+**relationships** (edges) as the text reasonably supports.  
+Aim for high *recall* while keeping *precision* acceptable (≥ 0.8).
+
+
+Return **one** valid JSON object with **exactly** these keys:
+
+1.  "hierarchy"  – a recursive outline capturing topical structure. Example:
+        {{"root": "Quantum Computing", "children": [{{"title": "Qubits"}}, …]}}
+2.  "schema"     – describes the graph model, with two top‑level keys:
+       • nodes:          list<{{label, properties:{{name:type}}}}>
+       • relationships:  list<{{type, properties:{{name:type}}}}>
+3.  "cypher"     – **array** of Cypher `MERGE` / `CREATE` statements that
+       instantiate *all* extracted nodes & relationships and set their
+       properties.
+
+**Extraction guidelines**
+• Create *separate nodes* for distinct real‑world entities: persons, orgs,
+  locations, events, concepts, dates, numerical facts, URLs, etc.
+  Capture any noun as a node, even if it is not a proper name and
+  capture any verb as a relationship.
+• Use *singular nouns* for node labels and *verbs* for relationship types.
+• Create *separate relationships* for distinct real‑world connections:
+    e.g., "is a", "is part of", "is related to", "is located in", "has a date",
+    "has a value", etc. Capture any verb as a relationship, even if it is not a
+    proper name.
+• Resolve pronouns and coreferences where clear.
+• Add properties when available (e.g., `date`, `url`, `amount`, `confidence`).
+  ➜ If confidence < 0.6 include the extraction anyway but tag
+    `confidence: float` on the relationship.
+
+****Cypher syntax constraints (STRICT)**
+• **One‑liner rule** – Every Cypher statement **must be emitted on a single physical line** and terminate with a semicolon `;`. No line‑break characters (`
+`) are allowed outside of quoted string literals.
+• **Balanced quotes** – String literals use single quotes `'...'`. Inside them **escape** any embedded single quote as `\'` and **replace every real line‑break with the two‑character sequence `\n`**.
+• **Valid identifiers** – Node **labels** and relationship **types** must be valid Neo4j identifiers:
+  – Prefer `PascalCase` or `snake_case` containing only letters, digits and `_`.
+  – If spaces or punctuation remain, enclose the whole identifier in back‑ticks: `` `Label With Space` ``.
+• **Variables** – Start with a lower‑case letter and contain only letters, digits or `_`.
+• **No stray text** – Output nothing except `MERGE` / `CREATE` / `MATCH` etc.; no comments or blank lines.
+
+**Graph size target****
+• Produce **≥ 15 distinct nodes** *or* cover ≥ 90 % of factual statements –
+  whichever yields the larger graph.
+
+**Output format**
+• Return **ONLY** the JSON – *no prose, no markdown fences*.
+
+Document Text ↓↓↓
+{text}
+"""
+
+    # === Call the model ===
+    response = model.generate_content(prompt)
+    payload = response.text.strip()
+
+    # ── Strip possible ``` fences ──────────────────────────────
+    if payload.startswith("```"):
+        lines = payload.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        payload = "\n".join(lines).strip()
+
+    # ── Parse the JSON or fall back to best‑effort extraction ──
+    try:
+        return json.loads(payload)
+    except JSONDecodeError:
+        snippet = extract_json(payload)
+        try:
+            return json.loads(snippet)
+        except JSONDecodeError:
+            raise ValueError(f"Invalid JSON received from model:\n{payload}")
+
+
+#################################################
+# 2️⃣  NATURAL‑LANGUAGE NARRATIVE (unchanged)   #
+#################################################
+
+def generate_semantic_narrative(hierarchy: dict, schema: dict) -> str:
+    """Italian narrative summary of the graph structure for UI/tooltips."""
+    h = json.dumps(hierarchy, ensure_ascii=False)
+    s = json.dumps(schema, ensure_ascii=False)
+    prompt = f"""
+Sei un esperto di knowledge graph. Usa la gerarchia e lo schema seguenti per
+produrre una narrazione fluida ed avvincente (in italiano) che spieghi cosa
+rappresenta il grafo, evidenzi i concetti chiave e le relazioni più
+significative.
+
+Gerarchia:
+{h}
+
+Schema:
+{s}
+
+Risposta:
+"""
+    response = model.generate_content(prompt)
+    narrative = response.text.strip()
+    if narrative.startswith("```") and narrative.endswith("```"):
+        narrative = narrative.strip("```").strip()
+    return narrative
