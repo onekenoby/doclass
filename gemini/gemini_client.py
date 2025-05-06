@@ -54,6 +54,7 @@ knowledge graph, surfacing as many meaningful **entities** (nodes) and
 **relationships** (edges) as the text reasonably supports.  
 Aim for high *recall* while keeping *precision* acceptable (≥ 0.8).
 
+
 Return **one** valid JSON object with **exactly** these keys:
 
 1.  "hierarchy"  – a recursive outline capturing topical structure. Example:
@@ -68,6 +69,13 @@ Return **one** valid JSON object with **exactly** these keys:
 **Extraction guidelines**
 • Create *separate nodes* for distinct real‑world entities: persons, orgs,
   locations, events, concepts, dates, numerical facts, URLs, etc.
+  Capture any noun as a node, even if it is not a proper name and
+  capture any verb as a relationship.
+• Use *singular nouns* for node labels and *verbs* for relationship types.
+• Create *separate relationships* for distinct real‑world connections:
+    e.g., "is a", "is part of", "is related to", "is located in", "has a date",
+    "has a value", etc. Capture any verb as a relationship, even if it is not a
+    proper name.
 • Resolve pronouns and coreferences where clear.
 • Add properties when available (e.g., `date`, `url`, `amount`, `confidence`).
   ➜ If confidence < 0.6 include the extraction anyway but tag

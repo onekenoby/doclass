@@ -1,91 +1,87 @@
 # graphdb/graph_builder.py
+"""Utilities to push Gemini‑generated Cypher into Neo4j.
 
-import re
+✓   Uses `preprocess.text_extractor.extract_text_from_file` (no more missing
+    symbol).
+✓   Keeps full semicolon‑terminated statements intact so variables declared in
+    node patterns are still in scope when the relationship pattern appears on
+    the same line.
+"""
+
+from __future__ import annotations
+
 import os
+import json
 from pathlib import Path
+from typing import List
+
 from dotenv import load_dotenv
 from neo4j import GraphDatabase, exceptions
+from preprocess.text_extractor import extract_text_from_file  # ✅ fixed import
 
-# Locate and load the .env file in the project root
+# ──────────────────────────────────────────────────────────────
+# Environment & connection
+# ──────────────────────────────────────────────────────────────
+
+# Locate and load the project‑root .env
 env_path = Path(__file__).resolve().parents[1] / ".env"
 print(f"[DEBUG] Loading .env from {env_path}")
 load_dotenv(env_path, override=True)
 
-# Read and sanitize Neo4j connection details
-uri = os.getenv("NEO4J_URI")
-user = os.getenv("NEO4J_USER")
-password = os.getenv("NEO4J_PASSWORD")
+URI      = os.getenv("NEO4J_URI",      "bolt://localhost:7687")
+USER     = os.getenv("NEO4J_USER",     "neo4j")
+PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+print(f"[DEBUG] Neo4j → URI={URI!r}, USER={USER!r}, PASS_LOADED={bool(PASSWORD)}")
 
-#uri = "bolt://127.0.0.1:7690"
-#user = "neo4j"
-#password = "onekenoby"
+driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
 
+# ──────────────────────────────────────────────────────────────
+# Helper: execute Cypher
+# ──────────────────────────────────────────────────────────────
 
-
-print(f"[DEBUG] Neo4j → URI={uri!r}, USER={user!r}, PASS_LOADED={bool(password)}")
-
-# Initialize the Neo4j driver
-try:
-    driver = GraphDatabase.driver(uri, auth=(user, password))
-except Exception as e:
-    print(f"❌ Failed to initialize Neo4j driver: {e}")
-    driver = None
-
-
-def preprocess_script(cypher_script: str) -> str:
+def execute_cypher_queries(raw_script: str) -> None:
+    """Run every semicolon‑terminated statement in *raw_script* exactly as it
+    appears so that variables remain in scope.
     """
-    Clean the raw Cypher script:
-      - Remove stray 'cypher' markers
-      - Collapse newlines inside string literals
-      - Escape internal double quotes
-    """
-    script = re.sub(r'(?m)^\s*cypher\s*$', '', cypher_script)
+    # Ensure the script ends with a semicolon so the last statement is caught
+    if not raw_script.strip().endswith(";"):
+        raw_script += ";"
 
-    def escape_literal(match):
-        content = match.group(1).replace('\n', ' ').replace('"', '\\"')
-        return f'"{content}"'
-
-    return re.sub(
-        r'"([^"\n]*(?:\n[^"\n]*)*)"',
-        escape_literal,
-        script,
-        flags=re.DOTALL
-    )
-
-
-def execute_cypher_queries(cypher_script: str):
-    """
-    Execute each MERGE/CREATE statement after preprocessing.
-    If the driver is not initialized, skip execution gracefully.
-    """
-    if driver is None:
-        print("❌ Cannot execute queries: Neo4j driver not initialized.")
-        return
-
-    script = preprocess_script(cypher_script)
-    statements = []
-    for part in script.split(';'):
-        for line in part.splitlines():
-            stmt = line.strip()
-            if stmt:
-                statements.append(stmt)
+    statements = [s.strip() + ";" for s in raw_script.split(";") if s.strip()]
 
     with driver.session() as session:
         for stmt in statements:
             try:
                 session.run(stmt)
-            except exceptions.AuthError:
-                print("❌ Authorization error: please check NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD.")
-                return
             except exceptions.CypherSyntaxError as e:
-                print(f"⚠️ Syntax error in Cypher:\n{stmt}\n→ {e.message}")
+                print(f"⚠️ Cypher syntax error:\n{stmt}\n→ {e.message}\n")
             except exceptions.Neo4jError as e:
-                print(f"⚠️ Neo4j execution error:\n{stmt}\n→ {e.message}")
+                print(f"⚠️ Neo4j error:\n{stmt}\n→ {e.message}\n")
 
+# ──────────────────────────────────────────────────────────────
+# Pipeline: PDF → text → Gemini → Cypher → Neo4j
+# ──────────────────────────────────────────────────────────────
 
-def close_driver():
-    """
-    Close the Neo4j driver connection.
-    """
-    if driver:
-        driver.close()
+from gemini.gemini_client import generate_structured_schema_and_cypher  # late import to avoid heavy deps on load
+
+def build_graph_from_pdf(pdf_path: str | Path) -> None:
+    """End‑to‑end ingestion of *pdf_path* into Neo4j."""
+    pdf_path = Path(pdf_path)
+
+    # 1️⃣ Extract raw document text (paragraph list ➜ string)
+    paragraphs: List[str] = extract_text_from_file(str(pdf_path))
+    doc_text = "\n".join(paragraphs)
+
+    # 2️⃣ Gemini: hierarchy, schema, cypher
+    result = generate_structured_schema_and_cypher(doc_text)
+    cypher_script = "\n".join(result.get("cypher", []))
+
+    # 3️⃣ Push to Neo4j
+    execute_cypher_queries(cypher_script)
+
+    # 4️⃣ Persist Gemini output for inspection (optional)
+    out_dir = pdf_path.with_suffix("").parent / "outputs"
+    out_dir.mkdir(exist_ok=True)
+    (out_dir / f"{pdf_path.stem}_gemini.json").write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf‑8"
+    )
