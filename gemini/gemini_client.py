@@ -46,59 +46,82 @@ def generate_structured_schema_and_cypher(text: str) -> dict:
     The prompt below is engineered to maximise **coverage** and **granularity**
     of the resulting knowledge‑graph while keeping the output machine‑parsable.
     """
-
     prompt = f"""
 You are an expert **knowledge‑graph architect** and **triple extractor**.
 Your goal is to convert the following document into a *dense* but *coherent*
 knowledge graph, surfacing as many meaningful **entities** (nodes) and
 **relationships** (edges) as the text reasonably supports.  
-Aim for high *recall* while keeping *precision* acceptable (≥ 0.8).
-
+Aim for high *recall* while keeping *precision* acceptable (≥ 0.4).
 
 Return **one** valid JSON object with **exactly** these keys:
 
-1.  "hierarchy"  – a recursive outline capturing topical structure. Example:
-        {{"root": "Quantum Computing", "children": [{{"title": "Qubits"}}, …]}}
-2.  "schema"     – describes the graph model, with two top‑level keys:
-       • nodes:          list<{{label, properties:{{name:type}}}}>
+1.  \"hierarchy\"  – a recursive outline capturing topical structure. Example:  
+        {{ \"root\": \"Quantum Computing\",
+           \"children\": [ {{ \"title\": \"Qubits\" }} ] }}
+
+2.  \"schema\" – describes the graph model, with two top‑level keys:  
+       • nodes:          list<{{label, properties:{{name:type}}}}>  
        • relationships:  list<{{type, properties:{{name:type}}}}>
-3.  "cypher"     – **array** of Cypher `MERGE` / `CREATE` statements that
-       instantiate *all* extracted nodes & relationships and set their
-       properties.
 
-**Extraction guidelines**
-• Create *separate nodes* for distinct real‑world entities: persons, orgs,
-  locations, events, concepts, dates, numerical facts, URLs, etc.
-  Capture any noun as a node, even if it is not a proper name and
-  capture any verb as a relationship.
-• Use *singular nouns* for node labels and *verbs* for relationship types.
-• Create *separate relationships* for distinct real‑world connections:
-    e.g., "is a", "is part of", "is related to", "is located in", "has a date",
-    "has a value", etc. Capture any verb as a relationship, even if it is not a
-    proper name.
-• Resolve pronouns and coreferences where clear.
-• Add properties when available (e.g., `date`, `url`, `amount`, `confidence`).
-  ➜ If confidence < 0.6 include the extraction anyway but tag
-    `confidence: float` on the relationship.
+3.  \"cypher\" – **array** of Cypher statements that instantiate *all* extracted
+       nodes **and** relationships and set their properties.
 
-****Cypher syntax constraints (STRICT)**
-• **One‑liner rule** – Every Cypher statement **must be emitted on a single physical line** and terminate with a semicolon `;`. No line‑break characters (`
-`) are allowed outside of quoted string literals.
-• **Balanced quotes** – String literals use single quotes `'...'`. Inside them **escape** any embedded single quote as `\'` and **replace every real line‑break with the two‑character sequence `\n`**.
-• **Valid identifiers** – Node **labels** and relationship **types** must be valid Neo4j identifiers:
-  – Prefer `PascalCase` or `snake_case` containing only letters, digits and `_`.
-  – If spaces or punctuation remain, enclose the whole identifier in back‑ticks: `` `Label With Space` ``.
-• **Variables** – Start with a lower‑case letter and contain only letters, digits or `_`.
-• **No stray text** – Output nothing except `MERGE` / `CREATE` / `MATCH` etc.; no comments or blank lines.
+---
 
-**Graph size target****
+## Extraction guidelines
+• Create **separate nodes** for distinct real‑world entities: persons, orgs,
+  locations, events, concepts, dates, numerical facts, URLs, etc.  
+  – Use *singular nouns* for node labels (PascalCase or snake_case).  
+• Create **separate relationships** for distinct real‑world connections and map
+  every **verb / verbal phrase** you detect to a relationship type in
+  `UPPER_SNAKE_CASE` (e.g. PUBLISHED_BY, LOCATED_IN).  
+  – Use *verbs* for relationship types (UPPER_SNAKE_CASE).
+• Create all the relationships you can find among the nodes, even if they are
+  not explicitly mentioned in the text.  
+  – Use *verbs* for relationship types (UPPER_SNAKE_CASE).  
+  – Use *singular nouns* for node labels (PascalCase or snake_case).  
+  – Use *singular nouns* for relationship types (UPPER_SNAKE_CASE).
+• **Mandatory balance – the graph must contain at least ⌈nodes ÷ 2⌉
+  relationship statements.**  
+• Emit each relationship as a *self‑contained* one‑liner, e.g.  
+  – *Inline‑merge*  
+    `MERGE (a:Person {{name:'Ada'}}) MERGE (b:Field {{name:'Math'}}) MERGE (a)-[:PIONEER_OF]->(b);`  
+  – *Property‑match*  
+    `MATCH (a:Person {{name:'Ada'}}),(b:Field {{name:'Math'}}) MERGE (a)-[:PIONEER_OF]->(b);`  
+  (Variables must be declared and used inside the **same** physical line.)  
+• Resolve pronouns / coreferences where clear.  
+• Add properties when available (date, url, amount, confidence).  
+  ➜ If confidence < 0.6 still include the edge but tag `confidence: float`.
+
+---
+
+## Cypher syntax constraints (STRICT)
+• **One‑liner rule** – Every Cypher statement must appear on a single physical
+  line and terminate with a semicolon `;`. No unescaped line‑break characters
+  are allowed outside quoted strings.  
+• **Balanced quotes** – String literals use single quotes `'...'`. Inside them,
+  escape any embedded single quote as `\\'` and replace real line‑breaks with
+  the two‑character sequence `\\n`.  
+• **Valid identifiers** – Node labels and relationship types must be valid
+  Neo4j identifiers. Prefer letters/digits/`_`; if spaces/punctuation remain,
+  wrap the whole identifier in back‑ticks (`` `Label With Space` ``).  
+• **Variables** – Start with a lower‑case letter, contain only letters, digits
+  or `_`.  
+• **No stray text** – Output nothing except Cypher (`MERGE`, `CREATE`, `MATCH`,
+  etc.); no comments or blank lines.
+
+---
+
+## Graph size target
 • Produce **≥ 15 distinct nodes** *or* cover ≥ 90 % of factual statements –
   whichever yields the larger graph.
 
-**Output format**
-• Return **ONLY** the JSON – *no prose, no markdown fences*.
+---
 
-Document Text ↓↓↓
+## Output format
+• Output **ONLY** the JSON object – no prose, no markdown fences.
+
+Document Text ↓↓↓
 {text}
 """
 
