@@ -47,83 +47,31 @@ def generate_structured_schema_and_cypher(text: str) -> dict:
     of the resulting knowledge‑graph while keeping the output machine‑parsable.
     """
     prompt = f"""
-You are an expert **knowledge‑graph architect** and **triple extractor**.
-Your goal is to convert the following document into a *dense* and *coherent*
-knowledge graph, surfacing as many meaningful **entities** (nodes) and
-**relationships** (edges) as the text reasonably supports.  
-Aim for high *recall* while keeping *precision* acceptable (≥ 0.6).
+    You are an expert **knowledge‑graph architect** and **triple extractor**.
+    Your goal is to convert the following document into a *dense* and *coherent*
+    knowledge graph, surfacing as many meaningful **entities** (nodes) and
+    **relationships** (edges) as the text reasonably supports.  
+    Aim for high *recall* while keeping *precision* acceptable (≥ 0.6).
 
-**Mandatory:** Ensure **all relationships** are set in the Graph Database Schema, as visible with the `call db.schema.visualization()` command.
+    **Mandatory:** Ensure **all relationships** are set in the Graph Database Schema, as visible with the `call db.schema.visualization()` command.
 
-Return **one** valid JSON object with **exactly** these keys:
+    Return **one** valid JSON object with **exactly** these keys:
 
-1.  \"hierarchy\"  – a recursive outline capturing topical structure. Example:  
-        {{ \"root\": \"Quantum Computing\",
-           \"children\": [ {{ \"title\": \"Qubits\" }} ] }}
+    1.  \"hierarchy\"  – a recursive outline capturing topical structure.
+    2.  \"schema\" – describes the graph model.
+    3.  \"cypher\" – **array** of Cypher statements.
 
-2.  \"schema\" – describes the graph model, with two top‑level keys:  
-       • nodes:          list<{{label, properties:{{name:type}}}}>  
-       • relationships:  list<{{type, properties:{{name:type}}}}>
+    --- 
 
-3.  \"cypher\" – **array** of Cypher statements that instantiate *all* extracted
-       nodes **and** relationships and set their properties.
+    ## Extraction guidelines
+    • Create **separate nodes** for distinct real‑world entities: persons, orgs, locations, events, concepts, dates, numerical facts, URLs, etc.  
+    • **Identify and extract ALL relationships** among the nodes, whether **explicit** or **implicit**.
+    • **Mandatory balance** – The graph must contain at least ⌈nodes ÷ 2⌉ relationship statements.
+    • Relationships **must** be emitted even if they're inferred or subtle (use `NO_RELATIONSHIP` for placeholders).
 
----
-
-## Extraction guidelines
-• **Create separate nodes** for distinct real‑world entities: persons, organizations, locations, events, concepts, dates, numerical facts, URLs, etc.  
-  – Use *singular nouns* for node labels (PascalCase or snake_case).  
-• **Identify and extract ALL relationships** among the nodes, whether **explicit** or **implicit**.  
-  Every **verb or verbal phrase** should be converted into a **relationship** with a clear type in `UPPER_SNAKE_CASE` (e.g., PUBLISHED_BY, LOCATED_IN).  
-  Even if relationships are not explicitly mentioned in the document, **deduce** the connections between entities based on context and common knowledge.
-  – Use *verbs* for relationship types (UPPER_SNAKE_CASE).  
-  – Use *singular nouns* for node labels (PascalCase or snake_case).  
-  – Use *singular nouns* for relationship types (UPPER_SNAKE_CASE).
-• **Mandatory balance** – the graph must contain at least ⌈nodes ÷ 2⌉ relationship statements. If no direct relationships are found, **use `NO_RELATIONSHIP` as a placeholder** to ensure nodes are linked. If implicit relationships are detected, **include those too**.
-• Ensure **all relationships** between nodes, no matter how subtle, are captured in the schema. Even small or implied relationships like “A is related to B” or “A exists in the context of B” should be treated as valid edges between entities.
-• Emit each relationship as a *self‑contained* one‑liner, e.g.  
-  – *Inline‑merge*  
-    'MERGE (a:Person {{name:'Ada'}}) MERGE (b:Field {{name:'Math'}}) MERGE (a)-[:PIONEER_OF]->(b);'  
-  – *Property‑match*  
-    `MATCH (a:Person {{name:'Ada'}}),(b:Field {{name:'Math'}}) MERGE (a)-[:PIONEER_OF]->(b);`  
-  (Variables must be declared and used inside the **same** physical line.)  
-• Resolve pronouns / coreferences where clear.  
-• Add properties when available (e.g., date, URL, amount, confidence).  
-  ➜ If confidence < 0.6 still include the edge but tag `confidence: float`.
-• **Relationships are mandatory** – use them even when setting the schema.  
-  ➜ If no relationships are explicitly found, create `NO_RELATIONSHIP` as a placeholder in your Cypher to ensure graph connectivity.
-
----
-
-## Cypher syntax constraints (STRICT)
-• **One‑liner rule** – Every Cypher statement must appear on a single physical
-  line and terminate with a semicolon `;`. No unescaped line‑break characters
-  are allowed outside quoted strings.  
-• **Balanced quotes** – String literals use single quotes `'...'`. Inside them,
-  escape any embedded single quote as `\\'` and replace real line‑breaks with
-  the two‑character sequence `\\n`.  
-• **Valid identifiers** – Node labels and relationship types must be valid
-  Neo4j identifiers. Prefer letters/digits/`_`; if spaces/punctuation remain,
-  wrap the whole identifier in back‑ticks (`` `Label With Space` ``).  
-• **Variables** – Start with a lower‑case letter, contain only letters, digits
-  or `_`.  
-• **No stray text** – Output nothing except Cypher (`MERGE`, `CREATE`, `MATCH`,
-  etc.); no comments or blank lines.
-
----
-
-## Graph size target
-• Produce **≥ 15 distinct nodes** *or* cover ≥ 90 % of factual statements –
-  whichever yields the larger graph.
-
----
-
-## Output format
-• Output **ONLY** the JSON object – no prose, no markdown fences.
-
-Document Text ↓↓↓
-{text}
-"""
+    Document Text ↓↓↓
+    {text}
+    """
 
 
 
