@@ -1,63 +1,87 @@
-from neo4j import GraphDatabase, exceptions
+# graphdb/graph_builder.py
+"""Utilities to push Gemini‑generated Cypher into Neo4j.
+
+✓   Uses `preprocess.text_extractor.extract_text_from_file` (no more missing
+    symbol).
+✓   Keeps full semicolon‑terminated statements intact so variables declared in
+    node patterns are still in scope when the relationship pattern appears on
+    the same line.
+"""
+
+from __future__ import annotations
+
 import os
+import json
+from pathlib import Path
+from typing import List
+
 from dotenv import load_dotenv
-from gemini.gemini_client import generate_narrative_from_cypher
+from neo4j import GraphDatabase, exceptions
+from preprocess.text_extractor import extract_text_from_file  # ✅ fixed import
 
-# Load environment
-load_dotenv()
+# ──────────────────────────────────────────────────────────────
+# Environment & connection
+# ──────────────────────────────────────────────────────────────
 
-driver = GraphDatabase.driver(
-    os.getenv("NEO4J_URI"),
-    auth=(os.getenv("NEO4J_USER"), os.getenv("NEO4J_PASSWORD"))
-)
+# Locate and load the project‑root .env
+env_path = Path(__file__).resolve().parents[1] / ".env"
+print(f"[DEBUG] Loading .env from {env_path}")
+load_dotenv(env_path, override=True)
 
-def execute_cypher_queries(cypher_script: str):
+URI      = os.getenv("NEO4J_URI",      "bolt://localhost:7687")
+USER     = os.getenv("NEO4J_USER",     "neo4j")
+PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+print(f"[DEBUG] Neo4j → URI={URI!r}, USER={USER!r}, PASS_LOADED={bool(PASSWORD)}")
+
+driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
+
+# ──────────────────────────────────────────────────────────────
+# Helper: execute Cypher
+# ──────────────────────────────────────────────────────────────
+
+def execute_cypher_queries(raw_script: str) -> None:
+    """Run every semicolon‑terminated statement in *raw_script* exactly as it
+    appears so that variables remain in scope.
     """
-    Execute the given Cypher script by running each statement (CREATE or MERGE)
-    separately, respecting the hierarchy: Document -> Paragraph -> Content.
-    This approach ensures we systematically retrieve and create all nodes and
-    relationships in the knowledge graph.
-    Splits on semicolons and newlines, skipping empty lines and stripping trailing semicolons.
-    """
-    # Split script into individual statements
-    raw_statements = []
-    parts = cypher_script.split(';')
-    for part in parts:
-        for line in part.splitlines():
-            stmt = line.strip()
-            if not stmt:
-                continue
-            raw_statements.append(stmt)
+    # Ensure the script ends with a semicolon so the last statement is caught
+    if not raw_script.strip().endswith(";"):
+        raw_script += ";"
+
+    statements = [s.strip() + ";" for s in raw_script.split(";") if s.strip()]
 
     with driver.session() as session:
-        for stmt in raw_statements:
+        for stmt in statements:
             try:
                 session.run(stmt)
             except exceptions.CypherSyntaxError as e:
-                print(f"⚠️ Syntax error executing statement:\n{stmt}\n  -> {e.message}")
+                print(f"⚠️ Cypher syntax error:\n{stmt}\n→ {e.message}\n")
             except exceptions.Neo4jError as e:
-                print(f"⚠️ Error executing statement:\n{stmt}\n  -> {e.message}")
-    driver.close()
+                print(f"⚠️ Neo4j error:\n{stmt}\n→ {e.message}\n")
 
-def interpret_graph(cypher_script: str):
-    """
-    Stampa una narrazione approfondita in italiano del grafo
-    e mostra la struttura dello schema (nodi e relazioni).
-    """
-    # Narrazione semantica in italiano
-    narrative_it = generate_narrative_from_cypher(cypher_script)
-    print("\n=== Interpretazione Semantica del Grafo ===\n")
-    print(narrative_it)
+# ──────────────────────────────────────────────────────────────
+# Pipeline: PDF → text → Gemini → Cypher → Neo4j
+# ──────────────────────────────────────────────────────────────
 
-    # Recupera struttura dello schema: etichette e tipi di relazioni
-    with driver.session() as session:
-        labels = [record["label"] for record in session.run("CALL db.labels()")]
-        rel_types = [record["relationshipType"] for record in session.run("CALL db.relationshipTypes()")]
+from gemini.gemini_client import generate_structured_schema_and_cypher  # late import to avoid heavy deps on load
 
-    print("\n=== Struttura dello Schema ===\n")
-    print("Nodi (etichette):")
-    for lbl in labels:
-        print(f"- {lbl}")
-    print("\nRelazioni:")
-    for rt in rel_types:
-        print(f"- {rt}")
+def build_graph_from_pdf(pdf_path: str | Path) -> None:
+    """End‑to‑end ingestion of *pdf_path* into Neo4j."""
+    pdf_path = Path(pdf_path)
+
+    # 1️⃣ Extract raw document text (paragraph list ➜ string)
+    paragraphs: List[str] = extract_text_from_file(str(pdf_path))
+    doc_text = "\n".join(paragraphs)
+
+    # 2️⃣ Gemini: hierarchy, schema, cypher
+    result = generate_structured_schema_and_cypher(doc_text)
+    cypher_script = "\n".join(result.get("cypher", []))
+
+    # 3️⃣ Push to Neo4j
+    execute_cypher_queries(cypher_script)
+
+    # 4️⃣ Persist Gemini output for inspection (optional)
+    out_dir = pdf_path.with_suffix("").parent / "outputs"
+    out_dir.mkdir(exist_ok=True)
+    (out_dir / f"{pdf_path.stem}_gemini.json").write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf‑8"
+    )
