@@ -48,10 +48,12 @@ def generate_structured_schema_and_cypher(text: str) -> dict:
     """
     prompt = f"""
 You are an expert **knowledge‑graph architect** and **triple extractor**.
-Your goal is to convert the following document into a *dense* but *coherent*
+Your goal is to convert the following document into a *dense* and *coherent*
 knowledge graph, surfacing as many meaningful **entities** (nodes) and
 **relationships** (edges) as the text reasonably supports.  
-Aim for high *recall* while keeping *precision* acceptable (≥ 0.4).
+Aim for high *recall* while keeping *precision* acceptable (≥ 0.6).
+
+**Mandatory:** Ensure **all relationships** are set in the Graph Database Schema, as visible with the `call db.schema.visualization()` command.
 
 Return **one** valid JSON object with **exactly** these keys:
 
@@ -69,33 +71,31 @@ Return **one** valid JSON object with **exactly** these keys:
 ---
 
 ## Extraction guidelines
-• Create **separate nodes** for distinct real‑world entities: persons, orgs,
-  locations, events, concepts, dates, numerical facts, URLs, etc.  
+• **Create separate nodes** for distinct real‑world entities: persons, organizations, locations, events, concepts, dates, numerical facts, URLs, etc.  
   – Use *singular nouns* for node labels (PascalCase or snake_case).  
-• Create **separate relationships** for distinct real‑world connections and map
-  every **verb / verbal phrase** you detect to a relationship type in
-  `UPPER_SNAKE_CASE` (e.g. PUBLISHED_BY, LOCATED_IN).  
-  – Use *verbs* for relationship types (UPPER_SNAKE_CASE).
-• Create all the relationships you can find among the nodes, even if they are
-  not explicitly mentioned in the text.  
+• **Identify and extract ALL relationships** among the nodes, whether **explicit** or **implicit**.  
+  Every **verb or verbal phrase** should be converted into a **relationship** with a clear type in `UPPER_SNAKE_CASE` (e.g., PUBLISHED_BY, LOCATED_IN).  
+  Even if relationships are not explicitly mentioned in the document, **deduce** the connections between entities based on context and common knowledge.
   – Use *verbs* for relationship types (UPPER_SNAKE_CASE).  
   – Use *singular nouns* for node labels (PascalCase or snake_case).  
   – Use *singular nouns* for relationship types (UPPER_SNAKE_CASE).
-• **Mandatory balance – the graph must contain at least ⌈nodes ÷ 2⌉
-  relationship statements.**  
+• **Mandatory balance** – the graph must contain at least ⌈nodes ÷ 2⌉ relationship statements. If no direct relationships are found, **use `NO_RELATIONSHIP` as a placeholder** to ensure nodes are linked. If implicit relationships are detected, **include those too**.
+• Ensure **all relationships** between nodes, no matter how subtle, are captured in the schema. Even small or implied relationships like “A is related to B” or “A exists in the context of B” should be treated as valid edges between entities.
 • Emit each relationship as a *self‑contained* one‑liner, e.g.  
   – *Inline‑merge*  
-    `MERGE (a:Person {{name:'Ada'}}) MERGE (b:Field {{name:'Math'}}) MERGE (a)-[:PIONEER_OF]->(b);`  
+    'MERGE (a:Person {{name:'Ada'}}) MERGE (b:Field {{name:'Math'}}) MERGE (a)-[:PIONEER_OF]->(b);'  
   – *Property‑match*  
     `MATCH (a:Person {{name:'Ada'}}),(b:Field {{name:'Math'}}) MERGE (a)-[:PIONEER_OF]->(b);`  
   (Variables must be declared and used inside the **same** physical line.)  
 • Resolve pronouns / coreferences where clear.  
-• Add properties when available (date, url, amount, confidence).  
-  ➜ If confidence < 0.6 still include the edge but tag `confidence: float`.
+• Add properties when available (e.g., date, URL, amount, confidence).  
+  ➜ If confidence < 0.6 still include the edge but tag `confidence: float`.
+• **Relationships are mandatory** – use them even when setting the schema.  
+  ➜ If no relationships are explicitly found, create `NO_RELATIONSHIP` as a placeholder in your Cypher to ensure graph connectivity.
 
 ---
 
-## Cypher syntax constraints (STRICT)
+## Cypher syntax constraints (STRICT)
 • **One‑liner rule** – Every Cypher statement must appear on a single physical
   line and terminate with a semicolon `;`. No unescaped line‑break characters
   are allowed outside quoted strings.  
@@ -112,18 +112,20 @@ Return **one** valid JSON object with **exactly** these keys:
 
 ---
 
-## Graph size target
+## Graph size target
 • Produce **≥ 15 distinct nodes** *or* cover ≥ 90 % of factual statements –
   whichever yields the larger graph.
 
 ---
 
-## Output format
+## Output format
 • Output **ONLY** the JSON object – no prose, no markdown fences.
 
 Document Text ↓↓↓
 {text}
 """
+
+
 
     # === Call the model ===
     response = model.generate_content(prompt)
